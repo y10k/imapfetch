@@ -35,7 +35,7 @@ c = proc{|name|
   config[name]
 }
 
-host = "c['server']}:#{c['port']}"
+host = "#{c['server']}:#{c['port']}"
 imap_info("connect #{host} (ssl: #{c['ssl']})")
 imap = Net::IMAP.new(c['server'], port: c['port'], ssl: c['ssl'])
 begin
