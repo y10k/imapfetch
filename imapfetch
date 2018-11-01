@@ -1,0 +1,111 @@
+#!/usr/local/bin/ruby
+# -*- coding: utf-8 -*-
+
+require 'logger'
+require 'net/imap'
+require 'yaml'
+require 'yaml/store'
+
+require 'pp' if $DEBUG
+
+def num_comma(number)
+  number.to_s.reverse.scan(/\d\d?\d?/).join(',').reverse
+end
+
+LOG_LIST = [ Logger.new(STDOUT) ]
+
+def imap_log(severity, message)
+  for logger in LOG_LIST
+    logger.log(severity, message)
+  end
+  nil
+end
+
+def imap_info(message)
+  imap_log(Logger::INFO, message)
+end
+
+config = YAML.load(ARGF)
+pp config if $DEBUG
+
+c = proc{|name|
+  unless (config.key? name) then
+    raise "not found a configuration key: #{name}"
+  end
+  config[name]
+}
+
+host = "c['server']}:#{c['port']}"
+imap_info("connect #{host} (ssl: #{c['ssl']})")
+imap = Net::IMAP.new(c['server'], port: c['port'], ssl: c['ssl'])
+begin
+  imap_info("login #{c['username']}")
+  imap.login(c['username'], c['password'])
+
+  imap_info("mailbox: #{c['mailbox']}")
+  imap.examine(Net::IMAP.encode_utf7(c['mailbox']))
+
+  store = YAML::Store.new(File.join(ENV['HOME'], '.imapfetchids'))
+  last_uid = store.transaction{
+    store[host] = {} unless (store.root? host)
+    store[host][c['username']] = {} unless (store[host].key? c['username'])
+    store[host][c['username']][c['mailbox']] = {} unless (store[host][c['username']].key? c['mailbox'])
+    store[host][c['username']][c['mailbox']]['last_uid'] || 0
+  }
+  imap_info("last uid: #{last_uid}")
+
+  imap_info('get server maximum uid')
+  max_uid_msg = imap.fetch('*', 'UID').last
+  pp max_uid_msg if $DEBUG
+  max_uid = max_uid_msg.attr['UID']
+
+  if (last_uid < max_uid) then
+    min_uid = last_uid.succ
+    imap_info("fetch messages #{min_uid}:#{max_uid}")
+    msg_list = imap.uid_fetch(min_uid..max_uid, %w[ UID RFC822.SIZE ])
+    pp msg_list if $DEBUG
+
+    total_messages = msg_list.size
+    total_octets = msg_list.sum{|m| m.attr['RFC822.SIZE'] }
+    imap_info("total #{total_messages} messages")
+    imap_info("total #{num_comma(total_octets)} octets")
+
+    for target in msg_list
+      pp target if $DEBUG
+      target_uid = target.attr['UID']
+      target_octets = target.attr['RFC822.SIZE']
+      imap_info("fetch uid: #{target_uid} of #{max_uid} (#{num_comma(target_octets)} octets)")
+
+      store.transaction{
+        for message in imap.uid_fetch(target_uid, 'RFC822')
+          pp message if $DEBUG
+          IO.popen(c['mda'], 'w') {|output|
+            output << message.attr['RFC822'] 
+          }
+          pp $? if $DEBUG
+          if ($?.exitstatus == 0) then
+            store[host][c['username']][c['mailbox']]['last_uid'] = target_uid
+          else
+            imap_log(Logger::FATAL, "MDA failed: #{c['mda']} (exit #{$?.exitstatus})")
+            abort('MDA failed')
+          end
+        end
+      }
+
+      imap_info("commit uid: #{target_uid}")
+    end
+  else
+    imap_info('no messages to fetch.')
+  end
+
+  imap_info('logout')
+  imap.logout
+ensure
+  imap_info('disconnect')
+  imap.disconnect
+end
+
+# Local Variables:
+# mode: Ruby
+# indent-tabs-mode: nil
+# End:
