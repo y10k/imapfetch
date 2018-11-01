@@ -52,12 +52,12 @@ begin
     store[host][c['username']][c['mailbox']] = {} unless (store[host][c['username']].key? c['mailbox'])
     store[host][c['username']][c['mailbox']]['last_uid'] || 0
   }
-  imap_info("last uid: #{last_uid}")
+  imap_log(Logger::DEBUG, "last uid: #{last_uid}")
 
-  imap_info('get server maximum uid')
   max_uid_msg = imap.fetch('*', 'UID').last
   pp max_uid_msg if $DEBUG
   max_uid = max_uid_msg.attr['UID']
+  imap_log(Logger::DEBUG, "server maximum uid: #{max_uid}")
 
   if (last_uid < max_uid) then
     min_uid = last_uid.succ
@@ -92,7 +92,7 @@ begin
         end
       }
 
-      imap_info("commit uid: #{target_uid}")
+      imap_log(Logger::DEBUG, "commit uid: #{target_uid}")
     end
   else
     imap_info('no messages to fetch.')
@@ -101,7 +101,7 @@ begin
   imap_info('logout')
   imap.logout
 ensure
-  imap_info('disconnect')
+  imap_log(Logger::DEBUG, 'disconnect')
   imap.disconnect
 end
 
