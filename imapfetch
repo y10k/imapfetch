@@ -32,6 +32,11 @@ pp config if $DEBUG
 if (config.key? 'stdlog_level') then
   STDLOG.level = config['stdlog_level']
 end
+if (config.key? 'log_file') then
+  logger = Logger.new(config['log_file'], *(config['log_options'] || []))
+  logger.level = config['log_level'] if (config.key? 'log_level')
+  LOG_LIST << logger
+end
 
 c = proc{|name|
   unless (config.key? name) then
