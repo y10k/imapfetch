@@ -12,7 +12,8 @@ def num_comma(number)
   number.to_s.reverse.scan(/\d\d?\d?/).join(',').reverse
 end
 
-LOG_LIST = [ Logger.new(STDOUT) ]
+STDLOG = Logger.new(STDOUT)
+LOG_LIST = [ STDLOG ]
 
 def fetch_log(severity, message)
   for logger in LOG_LIST
@@ -27,6 +28,10 @@ end
 
 config = YAML.load(ARGF)
 pp config if $DEBUG
+
+if (config.key? 'stdlog_level') then
+  STDLOG.level = config['stdlog_level']
+end
 
 c = proc{|name|
   unless (config.key? name) then
