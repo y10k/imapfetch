@@ -45,74 +45,79 @@ c = proc{|name|
   config[name]
 }
 
-host = "#{c['server']}:#{c['port']}"
-fetch_info("connect #{host} (ssl: #{c['ssl']})")
-imap = Net::IMAP.new(c['server'], port: c['port'], ssl: c['ssl'])
 begin
-  fetch_info("login #{c['username']}")
-  imap.login(c['username'], c['password'])
+  host = "#{c['server']}:#{c['port']}"
+  fetch_info("connect #{host} (ssl: #{c['ssl']})")
+  imap = Net::IMAP.new(c['server'], port: c['port'], ssl: c['ssl'])
+  begin
+    fetch_info("login #{c['username']}")
+    imap.login(c['username'], c['password'])
 
-  fetch_info("mailbox: #{c['mailbox']}")
-  imap.examine(Net::IMAP.encode_utf7(c['mailbox']))
+    fetch_info("mailbox: #{c['mailbox']}")
+    imap.examine(Net::IMAP.encode_utf7(c['mailbox']))
 
-  store = YAML::Store.new(File.join(ENV['HOME'], '.imapfetchids'))
-  last_uid = store.transaction{
-    store[host] = {} unless (store.root? host)
-    store[host][c['username']] = {} unless (store[host].key? c['username'])
-    store[host][c['username']][c['mailbox']] = {} unless (store[host][c['username']].key? c['mailbox'])
-    store[host][c['username']][c['mailbox']]['last_uid'] || 0
-  }
-  fetch_log(Logger::DEBUG, "last uid: #{last_uid}")
+    store = YAML::Store.new(File.join(ENV['HOME'], '.imapfetchids'))
+    last_uid = store.transaction{
+      store[host] = {} unless (store.root? host)
+      store[host][c['username']] = {} unless (store[host].key? c['username'])
+      store[host][c['username']][c['mailbox']] = {} unless (store[host][c['username']].key? c['mailbox'])
+      store[host][c['username']][c['mailbox']]['last_uid'] || 0
+    }
+    fetch_log(Logger::DEBUG, "last uid: #{last_uid}")
 
-  max_uid_msg = imap.fetch('*', 'UID').last
-  pp max_uid_msg if $DEBUG
-  max_uid = max_uid_msg.attr['UID']
-  fetch_log(Logger::DEBUG, "server maximum uid: #{max_uid}")
+    max_uid_msg = imap.fetch('*', 'UID').last
+    pp max_uid_msg if $DEBUG
+    max_uid = max_uid_msg.attr['UID']
+    fetch_log(Logger::DEBUG, "server maximum uid: #{max_uid}")
 
-  if (last_uid < max_uid) then
-    min_uid = last_uid.succ
-    fetch_info("fetch messages #{min_uid}:#{max_uid}")
-    msg_list = imap.uid_fetch(min_uid..max_uid, %w[ UID RFC822.SIZE ])
-    pp msg_list if $DEBUG
+    if (last_uid < max_uid) then
+      min_uid = last_uid.succ
+      fetch_info("fetch messages #{min_uid}:#{max_uid}")
+      msg_list = imap.uid_fetch(min_uid..max_uid, %w[ UID RFC822.SIZE ])
+      pp msg_list if $DEBUG
 
-    total_messages = msg_list.size
-    total_octets = msg_list.sum{|m| m.attr['RFC822.SIZE'] }
-    fetch_info("total #{total_messages} messages")
-    fetch_info("total #{num_comma(total_octets)} octets")
+      total_messages = msg_list.size
+      total_octets = msg_list.sum{|m| m.attr['RFC822.SIZE'] }
+      fetch_info("total #{total_messages} messages")
+      fetch_info("total #{num_comma(total_octets)} octets")
 
-    for target in msg_list
-      pp target if $DEBUG
-      target_uid = target.attr['UID']
-      target_octets = target.attr['RFC822.SIZE']
-      fetch_info("fetch uid: #{target_uid} of #{max_uid} (#{num_comma(target_octets)} octets)")
+      for target in msg_list
+        pp target if $DEBUG
+        target_uid = target.attr['UID']
+        target_octets = target.attr['RFC822.SIZE']
+        fetch_info("fetch uid: #{target_uid} of #{max_uid} (#{num_comma(target_octets)} octets)")
 
-      store.transaction{
-        for message in imap.uid_fetch(target_uid, 'RFC822')
-          pp message if $DEBUG
-          IO.popen(c['mda'], 'w') {|output|
-            output << message.attr['RFC822'] 
-          }
-          pp $? if $DEBUG
-          if ($?.exitstatus == 0) then
-            store[host][c['username']][c['mailbox']]['last_uid'] = target_uid
-          else
-            fetch_log(Logger::FATAL, "MDA failed: #{c['mda']} (exit #{$?.exitstatus})")
-            abort('MDA failed')
+        store.transaction{
+          for message in imap.uid_fetch(target_uid, 'RFC822')
+            pp message if $DEBUG
+            IO.popen(c['mda'], 'w') {|output|
+              output << message.attr['RFC822'] 
+            }
+            pp $? if $DEBUG
+            if ($?.exitstatus == 0) then
+              store[host][c['username']][c['mailbox']]['last_uid'] = target_uid
+            else
+              fetch_log(Logger::FATAL, "MDA failed: #{c['mda']} (exit #{$?.exitstatus})")
+              abort('MDA failed')
+            end
           end
-        end
-      }
+        }
 
-      fetch_log(Logger::DEBUG, "commit uid: #{target_uid}")
+        fetch_log(Logger::DEBUG, "commit uid: #{target_uid}")
+      end
+    else
+      fetch_info('no messages to fetch.')
     end
-  else
-    fetch_info('no messages to fetch.')
-  end
 
-  fetch_info('logout')
-  imap.logout
-ensure
-  fetch_log(Logger::DEBUG, 'disconnect')
-  imap.disconnect
+    fetch_info('logout')
+    imap.logout
+  ensure
+    fetch_log(Logger::DEBUG, 'disconnect')
+    imap.disconnect
+  end
+rescue
+  fetch_log(Logger::ERROR, $!)
+  raise
 end
 
 # Local Variables:
